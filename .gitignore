@@ -1,6 +1,28 @@
-venv/
+# Secrets — MAI committare
 .env
-*.csv
+.env.local
+*.pem
+*.key
+
+# Python
+venv/
+.venv/
 __pycache__/
 *.pyc
-outputs/
+*.pyo
+.pytest_cache/
+
+# Logs & temp
+*.log
+logs/
+/tmp/
+*.mp4
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Build artifacts
+lambda/build/
+*.zip
