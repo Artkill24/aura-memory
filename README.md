@@ -1,198 +1,168 @@
-# 🌍 WeatherArb — Weather Anomaly Intelligence Platform
+# 🧠 AURA Memory
 
-Piattaforma di rilevamento anomalie meteorologiche in tempo reale per **18.222+ città in 162+ paesi**, basata su Z-Score climatico confrontato con baseline storiche reali.
+> **Agentic forensic memory for deepfake detection.** Every analysis is remembered as a vector, recalled by similarity, and queryable in plain language.
 
-🔗 **Live**: [weatherarb.com](https://weatherarb.com)
-📡 **API**: [weatherarb.com/pricing](https://weatherarb.com/pricing)
+Built for the **CockroachDB × AWS Hackathon 2026** — _Build with agentic memory._
 
----
-
-## Cos'è WeatherArb
-
-WeatherArb calcola un indice proprietario **WWAI (World Weather Anomaly Index, 0-100)** per ogni città monitorata, confrontando i dati meteo attuali con baseline climatiche storiche per identificare deviazioni statisticamente significative (Z-Score).
-
-**Use case principali:**
-- 🌾 Agricoltura — stress idrico, rischio raccolto
-- ⚡ Energia — domanda HDD/CDD anomala
-- 🚚 Logistica — rischio meteo su rotte
-- 🏦 Assicurazioni — climate risk scoring
+🎥 **[Watch the 60-second demo](https://youtu.be/qr692pi1Ds8)** · 📂 **[Source code](https://github.com/Artkill24/aura-memory)**
 
 ---
 
-## Architettura
+## The problem
 
+Deepfake detectors are **stateless**. Every video is judged in isolation; the moment the response is returned, the evidence is gone. There is no institutional memory — no way to ask _"have we seen this manipulation before?"_ or _"which files came back with conflicting signals last week?"_
+
+**AURA Memory** turns a one-shot detector into a system that remembers.
+
+## What it does
+
+- 🔬 **Analyzes** a video through AURA's multi-layer forensic pipeline and returns a verdict (`SUSPICIOUS`, `CONFLICTING SIGNALS`, `AUTHENTIC`, …) with a composite score. Layer 10 even identifies the likely generative origin (Sora / Kling / Veo).
+- 🧬 **Remembers** every analysis: a durable detection record **plus a multimodal vector embedding** is written to CockroachDB.
+- 🔁 **Recalls** similar past detections via cosine similarity — the _"seen before"_ signal is returned inline with every new analysis.
+- 🤖 **Answers questions** about its own memory in natural language via the **Model Context Protocol (MCP)** — an AI agent turns _"how many detections and with which verdicts?"_ into SQL, runs it over a locked-down read-only connection, and answers.
+
+## Architecture
+
+![AURA Memory architecture](docs/architecture.png)
+
+Frontend: **Next.js on Vercel**. Backend: **Docker image on Amazon ECR**, running on **Amazon ECS (Express Mode)**. State + memory: **CockroachDB Serverless on AWS**.
+
+<details>
+<summary>Mermaid source</summary>
+
+```mermaid
+flowchart LR
+    U[Client / Frontend] -->|POST /analyze| API[FastAPI backend<br/>Amazon ECS · ECR image]
+    API --> P[Forensic pipeline<br/>11 layers · OpenCV · MediaPipe]
+    API --> E[Amazon Bedrock<br/>Titan Multimodal Embeddings<br/>1024-dim]
+    E --> DB[(CockroachDB Serverless<br/>on AWS)]
+    P --> DB
+    DB -->|cosine recall| API
+    API -->|verdict + similar_detections| U
+
+    A[AI Agent<br/>Claude Code / any MCP client] -->|natural language| MCP[CockroachDB MCP Server<br/>read-only]
+    MCP -->|SQL| DB
 ```
-NASA POWER (baseline climatica 20 anni, per città)
-MET Norway / NOAA NWS / Open-Meteo / WeatherAPI (dati live)
-         ↓
-    [FastAPI Backend — HuggingFace Spaces]
-    Z-Score Calculator + HDD/CDD Engine
-         ↓
-    [Supabase — Postgres]
-    weather_cache (snapshot live)
-    weather_history (serie storica oraria)
-    city_baseline (climatologia NASA POWER per città)
-         ↓
-    [Cloudflare Workers — Frontend statico]
-    19.000+ pagine SEO multilingua (IT/EN/DE/ES/FR/PT/AR)
-         ↓
-    Pulse-JSON via API pubblica
-```
 
----
+</details>
 
-## Stack Tecnico
+## Tech stack
 
-| Layer | Tecnologia |
+| Layer | Technology |
 |---|---|
-| Backend API | FastAPI (Python), deploy su HuggingFace Spaces |
-| Frontend | HTML statico + JS vanilla, Cloudflare Workers |
-| Database | Supabase (PostgreSQL) |
-| Dati meteo live | MET Norway, NOAA NWS, Open-Meteo, WeatherAPI |
-| Baseline climatica | NASA POWER Climatology API (MERRA-2, 2001-2020) |
-| AI / NLP | Groq (Llama 3) per articoli multilingua |
-| Automazione | GitHub Actions (refresh orario, migrazioni batch) |
-| Monetizzazione | Google AdSense |
-| Email | Resend (newsletter, alert) |
+| Forensic detection | Python · FastAPI · OpenCV · MediaPipe · Transformers (11-layer pipeline) |
+| Embeddings | Amazon Bedrock — Titan Multimodal (1024-dim) |
+| Memory / vector store | CockroachDB Serverless (AWS) — `VECTOR` column, cosine similarity |
+| API | FastAPI + OpenAPI / Swagger (`/docs`) |
+| Agentic memory | Model Context Protocol — CockroachDB MCP server (read-only) |
+| Frontend | Next.js on Vercel |
+| Compute | Amazon ECS (Express Mode), image on ECR; AWS Lambda for ingestion |
 
----
+## How the memory works
 
-## Setup Locale
+Each analysis produces a **fixed-size 1024-dimensional embedding** from Amazon Bedrock's Titan Multimodal model. Because the embedding is fixed-size, a 5-second clip and a 2-hour film cost the **same** storage — the video itself never enters the database, only its mathematical fingerprint. Raw files live in S3.
 
-### Backend (HuggingFace Spaces repo separato)
+Detections are stored in a single table (simplified):
 
-```bash
-cd /path/to/hf-weatherarb
-pip install -r requirements.txt
+```sql
+CREATE TABLE detections (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    filename        STRING,
+    verdict         STRING,          -- SUSPICIOUS | CONFLICTING SIGNALS | AUTHENTIC ...
+    status          STRING,          -- done | processing | error
+    composite_score FLOAT,
+    embedding       VECTOR(1024),    -- Titan Multimodal fingerprint
+    pdf_url         STRING,          -- forensic report (S3)
+    created_at      TIMESTAMPTZ DEFAULT now()
+);
 ```
 
-### Environment Variables (secrets su HF Spaces)
+Recall is a nearest-neighbour query over the vector column:
 
-```bash
-SUPABASE_URL=https://xxxxx.supabase.co
-SUPABASE_ANON_KEY=xxxxx
-GROQ_API_KEY=xxxxx
-WEATHER_API_KEY=xxxxx
-RESEND_API_KEY=xxxxx
+```sql
+SELECT filename, verdict, embedding <-> $1 AS distance
+FROM detections
+ORDER BY distance
+LIMIT 5;
 ```
 
-### Avvio locale
+A distance near `0` means _we have analyzed something almost identical before_ — surfaced as `similar_detections` in the `/analyze` response.
 
-```bash
-uvicorn main:app --reload --port 7860
-```
+## Agentic memory via MCP ⭐
 
-API: `http://localhost:7860`
-Docs: `http://localhost:7860/docs`
+This is the heart of the _agentic memory_ theme. The detection memory is exposed to any MCP-compatible AI client (Claude Code, Cursor, …) through the **CockroachDB MCP server**. Questions in natural language become SQL against the live database:
 
-### Frontend (Cloudflare Workers)
+> **"How many detections are there and with which verdicts?"**
+> → `SELECT verdict, count(*) FROM detections GROUP BY verdict`
+>
+> **"Show me the last detection with its verdict and time."**
+>
+> **"Are there any detections with conflicting signals? Which files?"**
 
-```bash
-cd data/website
-npx wrangler deploy
-```
+The agent writes the query, runs it, and even self-corrects — for example, excluding the large `embedding` column when it is not needed.
 
----
+## Security model
 
-## Endpoints Principali
+Two independent, demonstrable layers protect the memory:
 
-| Endpoint | Metodo | Descrizione |
-|---|---|---|
-| `/health` | GET | Status sistema |
-| `/api/v1/pulse/{slug}` | GET | Dati anomalia per città |
-| `/api/v1/pulse/nearby` | GET | Città più vicina a lat/lon |
-| `/api/v1/europe/top` | GET | Top anomalie per regione |
-| `/api/v1/global-signals` | GET | Wildfires, eventi NASA EONET |
-| `/api/v1/history/{slug}` | GET | Serie storica Z-Score (7gg) |
-| `/api/v1/wwai` | GET | World Weather Anomaly Index globale |
-| `/api/space-weather` | GET | Kp Index, solar flare (NOAA SWPC) |
-| `/pulse/refresh` | POST | Refresh completo cache (18k città) |
-| `/api/newsletter/subscribe` | POST | Iscrizione alert email |
+1. **Least-privilege database user** — a dedicated `aura_readonly` SQL user with `GRANT SELECT` on the detections table only. It cannot write, alter, or drop anything.
+2. **Read-only MCP server** — the CockroachDB MCP server runs with `--read-only`, gating every write-shaped tool at the protocol layer.
 
-### Esempio risposta `/api/v1/pulse/torino`
+All connections are encrypted in transit (`sslmode=require`).
+
+> _Even if the agent were compromised or prompted maliciously, it is structurally unable to modify the memory._
+
+## API
+
+`POST /analyze` — multipart upload (`file=@video.mp4`) →
 
 ```json
 {
-  "province": "Torino",
-  "comune": "Torino",
-  "country_code": "it",
-  "lat": 45.0703,
-  "lon": 7.6869,
-  "z_score": -1.5,
-  "anomaly_level": "UNUSUAL",
-  "event_type": "heavy_rain",
-  "score": 5.0,
-  "temperature_c": 17.7,
-  "precipitation": 0,
-  "humidity_pct": 94.6,
-  "wind_kmh": 12.2
+  "verdict": "SUSPICIOUS",
+  "composite_score": 0.396,
+  "status": "done",
+  "similar_detections": [
+    { "filename": "…", "verdict": "…", "distance": 0.02 }
+  ]
 }
 ```
 
----
+Interactive docs: **`/docs`** (Swagger UI).
 
-## Metodologia Z-Score
+## Getting started
 
-Lo Z-Score misura quante deviazioni standard la temperatura attuale si trova rispetto alla media storica per quel mese e quella città specifica:
-
-```
-Z = (temp_attuale - media_storica_NASA_POWER) / deviazione_standard
-```
-
-**Baseline**: climatologia NASA POWER (MERRA-2), 20 anni di dati (2001-2020), per ogni singola città — non una media globale generica.
-
-| Z-Score | Livello |
-|---|---|
-| \|Z\| < 1 | NORMAL |
-| 1 ≤ \|Z\| < 2 | UNUSUAL |
-| 2 ≤ \|Z\| < 3 | EXTREME |
-| \|Z\| ≥ 3 | CRITICAL |
-
----
-
-## Roadmap
-
-- [x] 18.222+ città in 162+ paesi
-- [x] Baseline NASA POWER reale per città (migrazione in corso)
-- [x] AdSense attivo
-- [x] Pagine regione/paese con aggregazione live
-- [x] Grafico storico Z-Score (7 giorni)
-- [ ] API pubblica a pagamento (tier Pro)
-- [ ] Widget embeddabile per siti terzi
-- [ ] Climate Risk Index regionale a lungo termine
-- [ ] App mobile
-
----
-
-## Struttura File (Frontend — questo repo)
-
-```
-nano_pulse/data/website/
-├── index.html                   # Homepage
-├── {cc}/                        # Pagine indice paese (162 paesi)
-│   ├── index.html
-│   └── {slug}/                  # Pagine città (18.222+)
-│       └── index.html
-├── it/{regione}/                # Pagine regione italiane (20)
-├── ar/ma/{slug}/                 # Pagine arabe Marocco (214)
-├── sitemap-*.xml                 # Sitemap per lingua/area
-├── ads.txt                       # Google AdSense authorized sellers
-└── worker.js                     # Cloudflare Worker entry point
+```bash
+git clone https://github.com/Artkill24/aura-memory.git
+cd aura-memory
+cp .env.example .env        # then fill in your values
+pip install -r requirements.txt
+uvicorn app.main:app --reload   # adjust to your actual entrypoint
 ```
 
-## Struttura File (Backend — repo separato hf-weatherarb)
+### Connect the MCP server (read-only)
 
+```bash
+claude mcp add cockroachdb -- uvx --from git+https://github.com/amineelkouhen/mcp-cockroachdb.git \
+  cockroachdb-mcp-server --read-only \
+  --url "postgresql://aura_readonly:***@<host>:26257/defaultdb?sslmode=require"
 ```
-hf-weatherarb/
-├── main.py                       # FastAPI app, tutti gli endpoint
-├── data/
-│   └── province_coords.json      # 18.222 città con lat/lon/country
-├── Dockerfile
-└── requirements.txt
-```
+
+Then ask your MCP client: _"How many detections are there and with which verdicts?"_
+
+## Roadmap / hardening
+
+- [ ] Bake the CockroachDB CA cert into the image to enable `sslmode=verify-full`
+- [ ] Rotate the `aura_readonly` credential and load it from a secrets manager
+- [ ] Batch-ingest a labelled deepfake/authentic corpus to enrich recall
+- [ ] Expose recall thresholds via the API
+
+## Hackathon
+
+Built for the **CockroachDB × AWS Hackathon 2026** — _Build with agentic memory_.
+Submission deadline: **18 Aug 2026**.
+
+🎥 [Demo video](https://youtu.be/qr692pi1Ds8)
 
 ---
 
-## Note
-
-Progetto indie, costruito e mantenuto da un solo sviluppatore. Pre-revenue al momento, con traffico organico reale (~800 query/giorno su Google) e monetizzazione AdSense attiva.
+Part of the **AURA** deepfake-detection project · [ARTKILL24](https://github.com/Artkill24)
